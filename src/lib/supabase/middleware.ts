@@ -44,12 +44,8 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(new URL(redirectTo, request.url))
   }
 
-  // Redirect unauthenticated users from protected routes
   const protectedPrefixes = ['/dashboard', '/centres', '/bookings', '/notifications', '/staff', '/admin']
   const isProtected = protectedPrefixes.some((p) => pathname.startsWith(p))
-  if (!user && isProtected) {
-    return NextResponse.redirect(new URL('/login', request.url))
-  }
 
   // Role-based access control
   if (user && isProtected) {
