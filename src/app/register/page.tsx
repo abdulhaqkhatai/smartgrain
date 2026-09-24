@@ -66,8 +66,8 @@ export default function RegisterPage() {
         full_name: form.fullName,
         phone: cleanPhone,
         village: form.village || null,
-        role: 'farmer',
-      })
+        role: 'farmer' as const,
+      } as any)
 
       if (profileError) {
         setError(profileError.message)

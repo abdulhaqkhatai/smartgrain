@@ -39,7 +39,7 @@ export default function LoginPage() {
         .eq('id', data.user.id)
         .single()
 
-      const role = profile?.role
+      const role = (profile as { role: string } | null)?.role
       router.push(
         role === 'admin' ? '/admin/analytics' : role === 'staff' ? '/staff/dashboard' : '/dashboard'
       )
