@@ -1,7 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { useEffect, useState, useCallback } from 'react'
 import { useProfile } from '@/hooks/useProfile'
 import { Navbar } from '@/components/layout/navbar'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -10,76 +9,46 @@ import { Spinner } from '@/components/ui/spinner'
 import { STAGE_LABELS, STAGE_COLORS, formatDate, formatTime } from '@/lib/utils'
 import { Users, Clock, CheckCircle, CalendarDays } from 'lucide-react'
 import Link from 'next/link'
-import type { Database } from '@/types/database'
 
-type Slot = Database['public']['Tables']['slots']['Row']
-type Booking = Database['public']['Tables']['bookings']['Row']
-
-interface SlotWithCount extends Slot {
+interface SlotWithCount {
+  id: string
+  slot_date: string
+  start_time: string
+  end_time: string
+  capacity: number
+  booked_count: number
+  is_active: boolean
   activeCount: number
 }
 
 export default function StaffDashboard() {
   const { profile, loading: profileLoading } = useProfile()
   const [todaySlots, setTodaySlots] = useState<SlotWithCount[]>([])
-  const [recentBookings, setRecentBookings] = useState<(Booking & { profiles: { full_name: string } })[]>([])
+  const [recentBookings, setRecentBookings] = useState<any[]>([])
   const [stats, setStats] = useState({ total: 0, active: 0, completed: 0, cancelled: 0 })
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    if (!profile?.assigned_centre_id) return
-
-    const today = new Date().toISOString().split('T')[0]
-    const supabase = createClient()
-
-    const fetchData = async () => {
-      // Today's slots
-      const { data: slots } = await supabase
-        .from('slots')
-        .select('*')
-        .eq('centre_id', profile.assigned_centre_id!)
-        .eq('slot_date', today)
-        .order('start_time')
-
-      // Today's bookings for stats
-      const { data: bookings } = await supabase
-        .from('bookings')
-        .select('*, profiles(full_name)')
-        .eq('centre_id', profile.assigned_centre_id!)
-        .order('booked_at', { ascending: false })
-        .limit(10)
-
-      const allBookings = bookings || []
-      const todayBookings = allBookings.filter((b) => b.booked_at.startsWith(today))
-
-      setStats({
-        total: todayBookings.length,
-        active: todayBookings.filter((b) =>
-          ['booked', 'checked_in', 'quality_check', 'weighed'].includes(b.procurement_stage)
-        ).length,
-        completed: todayBookings.filter((b) => b.procurement_stage === 'procured').length,
-        cancelled: todayBookings.filter((b) =>
-          ['cancelled', 'no_show', 'rejected'].includes(b.procurement_stage)
-        ).length,
-      })
-
-      setTodaySlots(
-        (slots || []).map((s) => ({
-          ...s,
-          activeCount: allBookings.filter(
-            (b) =>
-              b.slot_id === s.id &&
-              ['booked', 'checked_in', 'quality_check', 'weighed'].includes(b.procurement_stage)
-          ).length,
-        }))
-      )
-
-      setRecentBookings(allBookings.slice(0, 8) as any)
+  const fetchData = useCallback(async () => {
+    try {
+      const res = await fetch('/api/staff/dashboard')
+      if (res.ok) {
+        const data = await res.json()
+        setStats(data.stats || { total: 0, active: 0, completed: 0, cancelled: 0 })
+        setTodaySlots(data.todaySlots || [])
+        setRecentBookings(data.recentBookings || [])
+      }
+    } catch {
+      // Error
+    } finally {
       setLoading(false)
     }
+  }, [])
 
+  useEffect(() => {
     fetchData()
-  }, [profile])
+    const interval = setInterval(fetchData, 8000)
+    return () => clearInterval(interval)
+  }, [fetchData])
 
   if (profileLoading || loading) {
     return (
@@ -123,15 +92,17 @@ export default function StaffDashboard() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>Today&apos;s Slots</CardTitle>
-              <Link href="/staff/slots" className="text-sm text-green-600 hover:underline">
-                Manage →
+              <CardTitle>Today&apos;s Slots Capacity</CardTitle>
+              <Link href="/staff/slots" className="text-sm text-green-600 hover:underline font-medium">
+                Manage Slots →
               </Link>
             </div>
           </CardHeader>
           <CardContent className="px-0 pb-0">
             {todaySlots.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-6">No slots configured for today.</p>
+              <p className="text-sm text-gray-400 text-center py-6">
+                No slots configured for today. Go to Slot Management to generate slots.
+              </p>
             ) : (
               <div className="divide-y divide-gray-50">
                 {todaySlots.map((slot) => {
@@ -145,16 +116,20 @@ export default function StaffDashboard() {
                       <div className="flex-1">
                         <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                           <div
-                            className={`h-full rounded-full ${pct >= 80 ? 'bg-red-400' : pct >= 50 ? 'bg-amber-400' : 'bg-green-400'}`}
+                            className={`h-full rounded-full ${
+                              pct >= 80 ? 'bg-red-400' : pct >= 50 ? 'bg-amber-400' : 'bg-green-400'
+                            }`}
                             style={{ width: `${Math.min(100, pct)}%` }}
                           />
                         </div>
                         <div className="text-xs text-gray-400 mt-1">
-                          {slot.booked_count}/{slot.capacity} booked · {slot.activeCount} in queue
+                          {slot.booked_count}/{slot.capacity} booked · {slot.activeCount} currently waiting
                         </div>
                       </div>
                       {!slot.is_active && (
-                        <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">Closed</span>
+                        <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">
+                          Closed
+                        </span>
                       )}
                     </div>
                   )
@@ -170,8 +145,8 @@ export default function StaffDashboard() {
             <Card className="hover:border-green-300 hover:shadow-md transition-all cursor-pointer">
               <CardContent className="p-5 text-center">
                 <Users className="h-8 w-8 text-green-600 mx-auto mb-2" />
-                <div className="font-medium text-gray-700">Live Queue</div>
-                <div className="text-xs text-gray-400 mt-0.5">Manage today&apos;s queue</div>
+                <div className="font-medium text-gray-700">Live Queue Board</div>
+                <div className="text-xs text-gray-400 mt-0.5">Call next & update stages</div>
               </CardContent>
             </Card>
           </Link>
@@ -180,7 +155,7 @@ export default function StaffDashboard() {
               <CardContent className="p-5 text-center">
                 <CalendarDays className="h-8 w-8 text-blue-600 mx-auto mb-2" />
                 <div className="font-medium text-gray-700">Slot Management</div>
-                <div className="text-xs text-gray-400 mt-0.5">Configure capacity</div>
+                <div className="text-xs text-gray-400 mt-0.5">Configure capacity & overrides</div>
               </CardContent>
             </Card>
           </Link>
@@ -190,7 +165,7 @@ export default function StaffDashboard() {
         {recentBookings.length > 0 && (
           <Card>
             <CardHeader>
-              <CardTitle>Recent Bookings</CardTitle>
+              <CardTitle>Recent Centre Bookings</CardTitle>
             </CardHeader>
             <CardContent className="px-0 pb-0">
               <div className="divide-y divide-gray-50">
@@ -198,7 +173,9 @@ export default function StaffDashboard() {
                   <div key={b.id} className="flex items-center justify-between px-6 py-3">
                     <div>
                       <div className="text-sm font-mono font-medium">{b.booking_reference}</div>
-                      <div className="text-xs text-gray-400">{b.profiles?.full_name} · {b.grain_type}</div>
+                      <div className="text-xs text-gray-400">
+                        {b.farmer_name} · {b.grain_type}
+                      </div>
                     </div>
                     <Badge className={STAGE_COLORS[b.procurement_stage as string]}>
                       {STAGE_LABELS[b.procurement_stage as string]}

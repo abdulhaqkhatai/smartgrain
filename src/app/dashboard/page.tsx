@@ -1,7 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { useEffect, useState, useCallback } from 'react'
 import { useProfile } from '@/hooks/useProfile'
 import { useNotifications } from '@/hooks/useNotifications'
 import { Navbar } from '@/components/layout/navbar'
@@ -16,88 +15,40 @@ import {
   PAYMENT_COLORS,
   formatDate,
   formatTime,
-  formatCurrency,
 } from '@/lib/utils'
 import Link from 'next/link'
 import { CalendarPlus, Clock, Hash, MapPin, Wheat, TrendingUp } from 'lucide-react'
-import type { Database } from '@/types/database'
-
-type Booking = Database['public']['Tables']['bookings']['Row']
-type LiveQueue = Database['public']['Views']['live_queue']['Row']
-type Slot = Database['public']['Tables']['slots']['Row']
-type Centre = Database['public']['Tables']['centres']['Row']
-
-interface ActiveBooking extends Booking {
-  slots: Slot & { centres: Centre }
-}
 
 export default function FarmerDashboard() {
   const { profile, loading: profileLoading } = useProfile()
   const { unreadCount } = useNotifications(profile?.id)
-  const [activeBooking, setActiveBooking] = useState<ActiveBooking | null>(null)
-  const [queueInfo, setQueueInfo] = useState<LiveQueue | null>(null)
-  const [recentBookings, setRecentBookings] = useState<ActiveBooking[]>([])
+  const [activeBooking, setActiveBooking] = useState<any | null>(null)
+  const [queueInfo, setQueueInfo] = useState<{ queue_position: number; total_in_queue: number } | null>(null)
+  const [recentBookings, setRecentBookings] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    if (!profile) return
-
-    const fetchData = async () => {
-      const supabase = createClient()
-
-      // Get active bookings (not cancelled/procured/rejected/no_show)
-      const { data: bookings } = await supabase
-        .from('bookings')
-        .select('*, slots(*, centres(*))')
-        .eq('farmer_id', profile.id)
-        .not('procurement_stage', 'in', '(cancelled,procured,rejected,no_show)')
-        .order('booked_at', { ascending: false })
-        .limit(1)
-
-      if (bookings && bookings.length > 0) {
-        setActiveBooking(bookings[0] as ActiveBooking)
-
-        // Get queue position for active booking
-        const { data: queue } = await supabase
-          .from('live_queue')
-          .select('*')
-          .eq('booking_id', bookings[0].id)
-          .single()
-        setQueueInfo(queue)
+  const fetchData = useCallback(async () => {
+    try {
+      const res = await fetch('/api/farmer/active')
+      if (res.ok) {
+        const data = await res.json()
+        setActiveBooking(data.activeBooking)
+        setQueueInfo(data.queueInfo)
+        setRecentBookings(data.recentBookings || [])
       }
-
-      // Recent bookings
-      const { data: recent } = await supabase
-        .from('bookings')
-        .select('*, slots(*, centres(*))')
-        .eq('farmer_id', profile.id)
-        .order('booked_at', { ascending: false })
-        .limit(5)
-      setRecentBookings((recent || []) as ActiveBooking[])
-
+    } catch {
+      // Error handled silently on background refresh
+    } finally {
       setLoading(false)
     }
+  }, [])
 
+  useEffect(() => {
     fetchData()
-
-    // Realtime subscription for booking updates
-    const supabase = createClient()
-    const channel = supabase
-      .channel('farmer-bookings-' + profile.id)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'bookings',
-          filter: `farmer_id=eq.${profile.id}`,
-        },
-        () => fetchData()
-      )
-      .subscribe()
-
-    return () => { supabase.removeChannel(channel) }
-  }, [profile])
+    // Poll every 8s for live FIFO queue updates
+    const interval = setInterval(fetchData, 8000)
+    return () => clearInterval(interval)
+  }, [fetchData])
 
   if (profileLoading || loading) {
     return (
@@ -121,7 +72,10 @@ export default function FarmerDashboard() {
           </h1>
           <p className="text-gray-500 text-sm mt-1">
             {new Date().toLocaleDateString('en-IN', {
-              weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+              weekday: 'long',
+              day: 'numeric',
+              month: 'long',
+              year: 'numeric',
             })}
           </p>
         </div>
@@ -140,15 +94,15 @@ export default function FarmerDashboard() {
             <CardContent className="pt-4">
               <div className="grid grid-cols-2 gap-4">
                 {queueInfo && (
-                  <div className="col-span-2 bg-white rounded-xl p-4 border border-green-100 text-center">
+                  <div className="col-span-2 bg-white rounded-xl p-4 border border-green-100 text-center shadow-xs">
                     <div className="text-5xl font-bold text-green-700">
                       #{queueInfo.queue_position}
                     </div>
                     <div className="text-sm text-gray-500 mt-1">
-                      of {queueInfo.total_in_queue} in queue
+                      of {queueInfo.total_in_queue} in queue (Live FIFO)
                     </div>
                     {estimatedWaitMin > 0 && (
-                      <div className="flex items-center justify-center gap-1 mt-2 text-sm text-amber-600">
+                      <div className="flex items-center justify-center gap-1 mt-2 text-sm text-amber-600 font-medium">
                         <Clock className="h-4 w-4" />
                         Est. wait: ~{estimatedWaitMin} min
                       </div>
@@ -180,7 +134,7 @@ export default function FarmerDashboard() {
                   <div>
                     <div className="text-xs text-gray-500">Centre</div>
                     <div className="text-sm font-medium">
-                      {(activeBooking.slots as ActiveBooking['slots'])?.centres?.name}
+                      {activeBooking.slots?.centres?.name || 'Assigned Centre'}
                     </div>
                   </div>
                 </div>
@@ -189,7 +143,7 @@ export default function FarmerDashboard() {
                   <div>
                     <div className="text-xs text-gray-500">Slot Date</div>
                     <div className="text-sm font-medium">
-                      {formatDate((activeBooking.slots as ActiveBooking['slots'])?.slot_date)}
+                      {formatDate(activeBooking.slots?.slot_date || activeBooking.booked_at)}
                     </div>
                   </div>
                 </div>
@@ -207,7 +161,7 @@ export default function FarmerDashboard() {
               <div className="mt-4 flex gap-2">
                 <Link href={`/bookings/${activeBooking.id}`} className="flex-1">
                   <Button variant="outline" className="w-full" size="sm">
-                    View Details
+                    View Details & Timeline
                   </Button>
                 </Link>
                 <Link href="/bookings" className="flex-1">

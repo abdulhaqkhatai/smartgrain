@@ -2,10 +2,9 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
 import { useState } from 'react'
 import { Bell, Menu, X, Wheat } from 'lucide-react'
-import type { UserRole } from '@/types/database'
+import type { UserRole } from '@/lib/mongodb/models'
 
 interface NavbarProps {
   role?: UserRole
@@ -40,9 +39,9 @@ export function Navbar({ role = 'farmer', unreadCount = 0 }: NavbarProps) {
     role === 'admin' ? adminLinks : role === 'staff' ? staffLinks : farmerLinks
 
   const handleSignOut = async () => {
-    const supabase = createClient()
-    await supabase.auth.signOut()
+    await fetch('/api/auth/logout', { method: 'POST' })
     router.push('/login')
+    router.refresh()
   }
 
   const homeHref =
@@ -81,7 +80,7 @@ export function Navbar({ role = 'farmer', unreadCount = 0 }: NavbarProps) {
               <Link href="/notifications" className="relative p-2 text-gray-500 hover:text-gray-700">
                 <Bell className="h-5 w-5" />
                 {unreadCount > 0 && (
-                  <span className="absolute top-1 right-1 h-4 w-4 bg-red-500 rounded-full text-[10px] text-white flex items-center justify-center">
+                  <span className="absolute top-1 right-1 h-4 w-4 bg-red-500 rounded-full text-[10px] text-white flex items-center justify-center font-bold">
                     {unreadCount > 9 ? '9+' : unreadCount}
                   </span>
                 )}

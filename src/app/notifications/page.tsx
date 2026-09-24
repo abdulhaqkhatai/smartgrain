@@ -7,7 +7,6 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 import { Bell, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { createClient } from '@/lib/supabase/client'
 
 const TYPE_ICONS: Record<string, string> = {
   booking_confirmed: '✅',

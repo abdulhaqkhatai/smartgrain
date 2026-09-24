@@ -1,8 +1,7 @@
 'use client'
 
-import { useEffect, useState, use } from 'react'
+import { useEffect, useState, use, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
 import { useProfile } from '@/hooks/useProfile'
 import { useNotifications } from '@/hooks/useNotifications'
 import { Navbar } from '@/components/layout/navbar'
@@ -27,22 +26,15 @@ import {
   MapPin,
   Wheat,
   AlertTriangle,
-  Users,
 } from 'lucide-react'
-import type { Database, ProcurementStage } from '@/types/database'
-
-type Booking = Database['public']['Tables']['bookings']['Row']
-type StatusLog = Database['public']['Tables']['booking_status_log']['Row']
-type Slot = Database['public']['Tables']['slots']['Row']
-type Centre = Database['public']['Tables']['centres']['Row']
-type LiveQueue = Database['public']['Views']['live_queue']['Row']
-
-interface BookingDetail extends Booking {
-  slots: Slot & { centres: Centre }
-}
+import type { ProcurementStage } from '@/lib/mongodb/models'
 
 const STAGE_ORDER: ProcurementStage[] = [
-  'booked', 'checked_in', 'quality_check', 'weighed', 'procured',
+  'booked',
+  'checked_in',
+  'quality_check',
+  'weighed',
+  'procured',
 ]
 
 export default function BookingDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -51,89 +43,54 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
   const { unreadCount } = useNotifications(profile?.id)
   const router = useRouter()
 
-  const [booking, setBooking] = useState<BookingDetail | null>(null)
-  const [logs, setLogs] = useState<StatusLog[]>([])
-  const [queueInfo, setQueueInfo] = useState<LiveQueue | null>(null)
+  const [booking, setBooking] = useState<any | null>(null)
+  const [logs, setLogs] = useState<any[]>([])
+  const [queueInfo, setQueueInfo] = useState<{ queue_position: number; total_in_queue: number } | null>(null)
   const [loading, setLoading] = useState(true)
   const [cancelling, setCancelling] = useState(false)
   const [cancelConfirm, setCancelConfirm] = useState(false)
   const [error, setError] = useState('')
 
-  const fetchAll = async () => {
-    const supabase = createClient()
-
-    const { data: b } = await supabase
-      .from('bookings')
-      .select('*, slots(*, centres(*))')
-      .eq('id', bookingId)
-      .single()
-
-    if (b) {
-      setBooking(b as BookingDetail)
-
-      if (['booked', 'checked_in', 'quality_check', 'weighed'].includes(b.procurement_stage)) {
-        const { data: q } = await supabase
-          .from('live_queue')
-          .select('*')
-          .eq('booking_id', bookingId)
-          .single()
-        setQueueInfo(q)
-      }
+  const fetchAll = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/bookings/${bookingId}`)
+      if (!res.ok) throw new Error('Booking not found')
+      const data = await res.json()
+      setBooking(data.booking)
+      setLogs(data.logs || [])
+      setQueueInfo(data.queueInfo)
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
     }
-
-    const { data: l } = await supabase
-      .from('booking_status_log')
-      .select('*')
-      .eq('booking_id', bookingId)
-      .order('changed_at', { ascending: true })
-    setLogs(l || [])
-    setLoading(false)
-  }
+  }, [bookingId])
 
   useEffect(() => {
     fetchAll()
-
-    const supabase = createClient()
-    const channel = supabase
-      .channel('booking-detail-' + bookingId)
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'bookings',
-        filter: `id=eq.${bookingId}`,
-      }, fetchAll)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'booking_status_log',
-        filter: `booking_id=eq.${bookingId}`,
-      }, fetchAll)
-      .subscribe()
-
-    return () => { supabase.removeChannel(channel) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookingId])
+    const interval = setInterval(fetchAll, 8000)
+    return () => clearInterval(interval)
+  }, [fetchAll])
 
   const handleCancel = async () => {
     if (!booking) return
     setCancelling(true)
-    const supabase = createClient()
-    const { error: e } = await supabase
-      .from('bookings')
-      .update({
-        procurement_stage: 'cancelled',
-        cancelled_at: new Date().toISOString(),
-      })
-      .eq('id', booking.id)
-      .eq('farmer_id', profile?.id)
+    setError('')
 
-    if (e) {
-      setError(e.message)
-    } else {
-      await fetchAll()
-      setCancelConfirm(false)
+    try {
+      const res = await fetch(`/api/bookings/${booking.id}`, { method: 'PATCH' })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error || 'Failed to cancel')
+      } else {
+        await fetchAll()
+        setCancelConfirm(false)
+      }
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setCancelling(false)
     }
-    setCancelling(false)
   }
 
   if (loading) {
@@ -174,7 +131,9 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
             <h1 className="text-xl font-bold text-gray-900 font-mono">
               {booking.booking_reference}
             </h1>
-            <p className="text-gray-500 text-sm">{booking.slots?.centres?.name}</p>
+            <p className="text-gray-500 text-sm">
+              {booking.slots?.centres?.name || 'Procurement Centre'}
+            </p>
           </div>
           <Badge className={STAGE_COLORS[booking.procurement_stage]}>
             {STAGE_LABELS[booking.procurement_stage]}
@@ -187,10 +146,10 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
             <CardContent className="py-4 text-center">
               <div className="text-5xl font-bold text-green-700">#{queueInfo.queue_position}</div>
               <div className="text-sm text-gray-500 mt-1">
-                of {queueInfo.total_in_queue} in today&apos;s queue
+                of {queueInfo.total_in_queue} in today&apos;s queue (Live FIFO)
               </div>
               {estimatedWaitMin > 0 && (
-                <div className="flex items-center justify-center gap-1 mt-2 text-sm text-amber-600">
+                <div className="flex items-center justify-center gap-1 mt-2 text-sm text-amber-600 font-medium">
                   <Clock className="h-4 w-4" />
                   Est. wait: ~{estimatedWaitMin} min
                 </div>
@@ -210,17 +169,37 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
             <CardTitle className="text-base">Booking Details</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
-            <Row icon={<MapPin className="h-4 w-4" />} label="Centre" value={booking.slots?.centres?.name} />
-            <Row icon={<Clock className="h-4 w-4" />} label="Slot Date" value={formatDate(booking.slots?.slot_date)} />
+            <Row
+              icon={<MapPin className="h-4 w-4" />}
+              label="Centre"
+              value={booking.slots?.centres?.name}
+            />
+            <Row
+              icon={<Clock className="h-4 w-4" />}
+              label="Slot Date"
+              value={formatDate(booking.slots?.slot_date || booking.booked_at)}
+            />
             <Row
               icon={<Clock className="h-4 w-4" />}
               label="Time"
-              value={`${formatTime(booking.slots?.start_time)} – ${formatTime(booking.slots?.end_time)}`}
+              value={
+                booking.slots
+                  ? `${formatTime(booking.slots.start_time)} – ${formatTime(booking.slots.end_time)}`
+                  : '—'
+              }
             />
             <Row icon={<Wheat className="h-4 w-4" />} label="Grain" value={booking.grain_type} capitalize />
-            <Row icon={<Hash className="h-4 w-4" />} label="Est. Quantity" value={`${booking.estimated_quantity_kg} kg`} />
+            <Row
+              icon={<Hash className="h-4 w-4" />}
+              label="Est. Quantity"
+              value={`${booking.estimated_quantity_kg} kg`}
+            />
             {booking.actual_quantity_kg && (
-              <Row icon={<Hash className="h-4 w-4" />} label="Actual Quantity" value={`${booking.actual_quantity_kg} kg`} />
+              <Row
+                icon={<Hash className="h-4 w-4" />}
+                label="Actual Quantity"
+                value={`${booking.actual_quantity_kg} kg`}
+              />
             )}
             {booking.payment_stage !== 'not_applicable' && (
               <div className="flex items-center justify-between pt-2 border-t border-gray-100">
@@ -244,8 +223,9 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
             <CardTitle className="text-base">Progress Timeline</CardTitle>
           </CardHeader>
           <CardContent>
-            {/* Rejected / cancelled shorthand */}
-            {(booking.procurement_stage === 'rejected' || booking.procurement_stage === 'cancelled' || booking.procurement_stage === 'no_show') ? (
+            {booking.procurement_stage === 'rejected' ||
+            booking.procurement_stage === 'cancelled' ||
+            booking.procurement_stage === 'no_show' ? (
               <div className="flex items-center gap-3 py-2">
                 <div className="h-8 w-8 rounded-full bg-red-100 flex items-center justify-center">
                   <AlertTriangle className="h-4 w-4 text-red-500" />
@@ -341,15 +321,27 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
             <AlertTriangle className="h-10 w-10 text-red-500 mx-auto mb-3" />
-            <h3 className="text-lg font-semibold text-center text-gray-900 mb-2">Cancel Booking?</h3>
+            <h3 className="text-lg font-semibold text-center text-gray-900 mb-2">
+              Cancel Booking?
+            </h3>
             <p className="text-sm text-gray-500 text-center mb-6">
               This will cancel your booking for {booking.booking_reference}. This cannot be undone.
             </p>
             <div className="flex gap-3">
-              <Button variant="outline" className="flex-1" onClick={() => setCancelConfirm(false)} disabled={cancelling}>
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setCancelConfirm(false)}
+                disabled={cancelling}
+              >
                 Keep Booking
               </Button>
-              <Button variant="destructive" className="flex-1" onClick={handleCancel} loading={cancelling}>
+              <Button
+                variant="destructive"
+                className="flex-1"
+                onClick={handleCancel}
+                loading={cancelling}
+              >
                 Yes, Cancel
               </Button>
             </div>

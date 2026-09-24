@@ -6,12 +6,13 @@
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | Next.js 14+ (App Router), TypeScript, Tailwind CSS v4 |
-| Backend/DB | Supabase (PostgreSQL, Auth, Realtime, RLS) |
-| SMS | Fast2SMS (Indian carriers, no per-recipient verification) |
-| Maps | Leaflet / OpenStreetMap (free, no API key) |
-| Charts | Recharts |
-| Hosting | Vercel (frontend) + Supabase Cloud (backend) |
+| Frontend | Next.js 16 (App Router), TypeScript, Tailwind CSS v4 |
+| Backend & Database | **MongoDB** + **Mongoose** (Collections, Indexes, Atomic Concurrency) |
+| Auth & Security | JWT in HTTP-only Cookies via `jose` + `bcryptjs` password hashing |
+| SMS & Notifications | Fast2SMS API route + In-app Realtime notification polling |
+| Maps | Leaflet / OpenStreetMap (free, zero API cost) |
+| Charts & Visuals | Recharts (responsive analytics suite) |
+| Hosting | Vercel (frontend & API routes) + MongoDB Atlas / Local MongoDB |
 
 ---
 
@@ -20,153 +21,134 @@
 ```
 src/
 ├── app/
-│   ├── login/                    # Auth pages
-│   ├── register/
-│   ├── dashboard/                # Farmer dashboard (live queue position)
-│   ├── centres/                  # Browse centres + Leaflet map
-│   │   └── [id]/book/            # 3-step slot booking flow
+│   ├── login/                    # Auth pages (email/password, role redirects)
+│   ├── register/                 # Farmer registration with phone validation
+│   ├── dashboard/                # Farmer dashboard (live FIFO queue rank & wait estimate)
+│   ├── centres/                  # Browse centres + Leaflet interactive map
+│   │   └── [id]/book/            # 3-step slot booking wizard
 │   ├── bookings/                 # Booking history
-│   │   └── [id]/                 # Status timeline + cancel
-│   ├── notifications/            # Realtime notification bell
+│   │   └── [id]/                 # Status progress timeline + cancel
+│   ├── notifications/            # In-app notification feed
 │   ├── staff/
-│   │   ├── dashboard/            # Today's stats + slot overview
-│   │   ├── queue/                # Live queue board (Realtime)
-│   │   └── slots/                # Slot & template management
+│   │   ├── dashboard/            # Capacity gauges & today's queue overview
+│   │   ├── queue/                # Live queue board (one-click stage advance, inline weigh/payment)
+│   │   └── slots/                # Slot & weekly capacity template management
 │   ├── admin/
-│   │   ├── centres/              # Centre CRUD
+│   │   ├── centres/              # Procurement Centre CRUD
 │   │   ├── staff/                # Staff account creation + centre assignment
-│   │   └── analytics/            # Charts dashboard
+│   │   └── analytics/            # Recharts analytics (peak hours, wait time, centre load)
 │   └── api/
-│       ├── admin/create-staff/   # Service-role staff account creation
-│       └── notifications/send/   # Fast2SMS + in-app notification sender
+│       ├── auth/                 # register, login, logout, me (JWT cookies)
+│       ├── centres/              # list centres, [id], [id]/slots
+│       ├── bookings/             # list, book (atomic concurrency), [id] (details, cancel)
+│       ├── farmer/active/        # active booking & live queue rank calculation
+│       ├── staff/                # dashboard, queue, slots
+│       ├── admin/                # centres, staff, analytics
+│       ├── notifications/        # list, mark-read, send (Fast2SMS)
+│       └── seed/                 # 1-click database population endpoint
 ├── components/
 │   ├── ui/                       # Button, Input, Select, Card, Badge, Spinner
-│   ├── layout/                   # Navbar (role-aware)
-│   └── centres/                  # Leaflet map (dynamic import)
+│   ├── layout/                   # Navbar (role-aware links & sign-out)
+│   └── centres/                  # Leaflet OpenStreetMap component (client-only)
 ├── hooks/
-│   ├── useProfile.ts             # Current user profile
-│   └── useNotifications.ts       # Realtime notification feed
+│   ├── useProfile.ts             # Active user profile hook
+│   └── useNotifications.ts       # Live notification polling hook
 ├── lib/
-│   ├── supabase/                 # client.ts, server.ts, middleware.ts
-│   └── utils.ts                  # formatDate, STAGE_LABELS, etc.
-├── types/
-│   └── database.ts               # Full TypeScript DB interface
-└── middleware.ts                  # Role-based route protection
-supabase/
-├── schema.sql                    # Full DB schema + RLS + RPCs + seed
-├── seed.sql                      # Reference seed data
-└── functions/
-    ├── send-notification/        # Fast2SMS Edge Function
-    ├── generate-slots/           # Slot generation Edge Function
-    └── queue-reminder/           # your_turn + 24h reminder cron
+│   ├── auth.ts                   # JWT sign/verify (jose) & bcryptjs helpers
+│   ├── utils.ts                  # formatDate, STAGE_LABELS, formatCurrency
+│   └── mongodb/
+│       ├── db.ts                 # Cached Mongoose connection singleton
+│       ├── models.ts             # User, Centre, Slot, Template, Booking, StatusLog, etc.
+│       └── services.ts           # Atomic booking, queue calculations, and seeding
+├── middleware.ts                 # Next.js Edge JWT middleware with role-based protection
+└── scripts/
+    └── seed.mjs                  # Standalone CLI seeding script
 ```
 
 ---
 
-## Setup Guide
+## Setup & Running Guide
 
-### 1. Create Supabase Project
-
-1. Go to [supabase.com](https://supabase.com) → New Project
-2. Copy your **Project URL** and **anon key** from Settings → API
-
-### 2. Run the Schema
-
-1. Open Supabase SQL Editor
-2. Paste and run the entire contents of `supabase/schema.sql`
-3. This creates all tables, RLS policies, RPCs, the `live_queue` view, and seeds 3 test centres
-
-### 3. Configure Environment Variables
+### 1. Configure Environment Variables
 
 Edit `.env.local`:
 ```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+MONGODB_URI=mongodb://localhost:27017/grain_procurement
+# Or for MongoDB Atlas:
+# MONGODB_URI=mongodb+srv://<username>:<password>@cluster0.mongodb.net/grain_procurement?retryWrites=true&w=majority
+
+JWT_SECRET=smart_grain_procurement_jwt_secret_key_2026_sih_project
 FAST2SMS_API_KEY=your-fast2sms-api-key
 ```
 
-> **Get Fast2SMS key**: Register at [fast2sms.com](https://fast2sms.com), go to Dev API → API Key. Costs ~₹1/SMS.
+### 2. Seed the Database
 
-### 4. Run Locally
+You can populate test centres, slot templates, 14 days of slots, and demo accounts using either method:
+
+**Option A — Via CLI**:
+```bash
+npm run seed
+```
+
+**Option B — Via Browser / API**:
+Start the dev server and open `http://localhost:3000/api/seed` in your browser.
+
+---
+
+### 3. Run Locally
 
 ```bash
 npm run dev
 ```
 
-Open http://localhost:3000
+Open [http://localhost:3000](http://localhost:3000).
 
-### 5. Deploy Edge Functions (Supabase)
+---
 
-```bash
-# Install Supabase CLI
-npm install -g supabase
+## Pre-Configured Demo Accounts
 
-# Login and link to your project
-supabase login
-supabase link --project-ref your-project-ref
+After running the seed script, log in with any of these pre-configured accounts:
 
-# Set secrets
-supabase secrets set FAST2SMS_API_KEY=your-key
+| Role | Email | Password | Assigned Centre |
+|------|-------|----------|-----------------|
+| **Farmer** | `farmer@grainprocure.in` | `farmer123` | N/A |
+| **Staff** | `staff@grainprocure.in` | `staff123` | Jodhpur Main Centre (`JDH-01`) |
+| **Admin** | `admin@grainprocure.in` | `admin123` | All Centres |
 
-# Deploy
-supabase functions deploy send-notification
-supabase functions deploy generate-slots
-supabase functions deploy queue-reminder
+*Or register a new farmer account directly via the `/register` page.*
+
+---
+
+## Core Technical Solutions for Viva
+
+### 1. Race-Condition-Proof Capacity Control (Section 3)
+In MongoDB, overbooking is prevented using an atomic conditional update:
+```javascript
+const slot = await Slot.findOneAndUpdate(
+  {
+    _id: slotId,
+    is_active: true,
+    $expr: { $lt: ['$booked_count', '$capacity'] }
+  },
+  { $inc: { booked_count: 1 } },
+  { new: true }
+);
+if (!slot) throw new Error("SLOT_FULL");
 ```
+Because MongoDB document modifications are serialized and atomic at the document level, two simultaneous requests hitting the last remaining slot will result in only one operation matching the condition (`booked_count < capacity`), completely preventing race conditions.
 
-### 6. Set Up Cron Jobs (pg_cron or Supabase Dashboard)
+### 2. Strict FIFO Live Queue Calculation (Section 4)
+Queue rank is **not** stored as a mutable integer. Instead, it is computed dynamically by ordering active bookings for that centre and slot date by `booked_at`:
+- When an earlier booking is completed, cancelled, or marked as a no-show, the queue position for all waiting farmers updates automatically.
+- The farmer dashboard and staff queue board poll every 5–8 seconds to reflect real-time queue changes without requiring replica set change streams.
 
-In Supabase → Edge Functions → Schedule:
-- `generate-slots`: Daily at midnight → `generate_slots_from_templates(14)`
-- `queue-reminder`: Every 10 minutes → checks queue positions 1-2 + 24h reminders
+### 3. Status Pipeline & Audit Log (Section 5)
+Every procurement transition:
+`booked` → `checked_in` → `quality_check` → `weighed` → `procured` (Payment: `pending` → `paid`)
+is logged in the `BookingStatusLog` collection with timestamps, creating a transparent audit trail visible on the farmer's status timeline screen.
 
-### 7. Deploy to Vercel
-
-```bash
-npm install -g vercel
-vercel --prod
-```
-
-Add the same env vars in Vercel Dashboard → Settings → Environment Variables.
-
----
-
-## Create Test Accounts
-
-After running the schema, create accounts via the app:
-
-1. **Farmer**: Register at `/register` — gets farmer role automatically
-2. **Admin**: Create via Supabase Auth dashboard → manually set `role = 'admin'` in `profiles` table
-3. **Staff**: Log in as admin → go to `/admin/staff` → create staff account (uses service role API)
-
----
-
-## Key Demo Points (Viva)
-
-| SIH Requirement | Where Implemented |
-|---|---|
-| Farmer registration + slot booking | `/register`, `/centres/[id]/book` + `book_slot` RPC |
-| Race condition proof | `FOR UPDATE` row lock in `book_slot` PostgreSQL function |
-| Real-time queue management | `live_queue` view + Supabase Realtime on `bookings` table |
-| SMS + in-app notifications | `/api/notifications/send` + Fast2SMS + `notifications` table |
-| Procurement + payment stage tracking | `update_booking_stage` RPC + `booking_status_log` audit trail |
-| Congestion reduction | Slot capacity control prevents overbooking; estimated wait time shown |
-| Analytics | `/admin/analytics` — peak hours, centre load, stage distribution, daily trends |
-
----
-
-## Supabase Realtime Setup
-
-Enable Realtime on these tables in Supabase Dashboard → Database → Replication:
-- `bookings` — for live queue board and farmer position updates
-- `notifications` — for notification bell badge
-
----
-
-## Notes for Report / Viva
-
-- **Queue position is FIFO** — computed from `live_queue` view (window function over `booked_at`), never stored as a mutable field
-- **RLS is enforced server-side** — farmers can only see their own bookings; staff only sees their centre
-- **Staff creation uses Service Role key** — regular anon key cannot bypass the `role` default; only admin can create staff via `/api/admin/create-staff`
-- **SLOT_FULL demo**: Open the booking page on two browsers simultaneously, both try to book the last slot — only one succeeds (show the error toast)
+### 4. Admin Workload & Congestion Analytics (Section 7)
+The `/admin/analytics` dashboard provides live visibility into centre congestion:
+- Centre-wise load distribution (Bookings vs Completed).
+- Peak booking hours histogram (0:00–23:00) to identify rush windows.
+- Average processing and waiting times calculated from checked-in and completion timestamps.

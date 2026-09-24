@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Wheat } from 'lucide-react'
@@ -44,39 +43,26 @@ export default function RegisterPage() {
     }
 
     setLoading(true)
-    const supabase = createClient()
 
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email: form.email,
-      password: form.password,
-      options: {
-        data: { full_name: form.fullName },
-      },
-    })
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+      const data = await res.json()
 
-    if (signUpError) {
-      setError(signUpError.message)
-      setLoading(false)
-      return
-    }
-
-    if (data.user) {
-      const { error: profileError } = await supabase.from('profiles').insert({
-        id: data.user.id,
-        full_name: form.fullName,
-        phone: cleanPhone,
-        village: form.village || null,
-        role: 'farmer' as const,
-      } as any)
-
-      if (profileError) {
-        setError(profileError.message)
+      if (!res.ok) {
+        setError(data.error || 'Registration failed')
         setLoading(false)
         return
       }
 
       router.push('/dashboard')
       router.refresh()
+    } catch (err: any) {
+      setError(err.message || 'Network error')
+      setLoading(false)
     }
   }
 

@@ -2,20 +2,27 @@
 
 import dynamic from 'next/dynamic'
 import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
 import { useProfile } from '@/hooks/useProfile'
 import { useNotifications } from '@/hooks/useNotifications'
 import { Navbar } from '@/components/layout/navbar'
 import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { MapPin, Search, Wheat, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
-import type { Database } from '@/types/database'
 
-type Centre = Database['public']['Tables']['centres']['Row']
+interface Centre {
+  id: string
+  name: string
+  code: string
+  address: string
+  district: string
+  state: string
+  latitude?: number | null
+  longitude?: number | null
+  grain_types: string[]
+  is_active: boolean
+}
 
 // Leaflet map loaded client-side only to avoid SSR issues
 const CentresMap = dynamic(() => import('@/components/centres/centres-map'), {
@@ -38,17 +45,14 @@ export default function CentresPage() {
   const [view, setView] = useState<'list' | 'map'>('list')
 
   useEffect(() => {
-    const supabase = createClient()
-    supabase
-      .from('centres')
-      .select('*')
-      .eq('is_active', true)
-      .order('name')
-      .then(({ data }) => {
-        setCentres(data || [])
-        setFiltered(data || [])
-        setLoading(false)
+    fetch('/api/centres')
+      .then((res) => res.json())
+      .then((data) => {
+        setCentres(data.centres || [])
+        setFiltered(data.centres || [])
       })
+      .catch(() => {})
+      .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
@@ -108,13 +112,17 @@ export default function CentresPage() {
           <div className="flex rounded-lg border border-gray-200 overflow-hidden">
             <button
               onClick={() => setView('list')}
-              className={`px-4 py-2 text-sm font-medium ${view === 'list' ? 'bg-green-600 text-white' : 'bg-white text-gray-600'}`}
+              className={`px-4 py-2 text-sm font-medium ${
+                view === 'list' ? 'bg-green-600 text-white' : 'bg-white text-gray-600'
+              }`}
             >
               List
             </button>
             <button
               onClick={() => setView('map')}
-              className={`px-4 py-2 text-sm font-medium ${view === 'map' ? 'bg-green-600 text-white' : 'bg-white text-gray-600'}`}
+              className={`px-4 py-2 text-sm font-medium ${
+                view === 'map' ? 'bg-green-600 text-white' : 'bg-white text-gray-600'
+              }`}
             >
               Map
             </button>
@@ -129,7 +137,7 @@ export default function CentresPage() {
           <>
             {view === 'map' && (
               <div className="mb-4">
-                <CentresMap centres={filtered} />
+                <CentresMap centres={filtered as any} />
               </div>
             )}
 

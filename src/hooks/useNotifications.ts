@@ -1,67 +1,56 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
-import type { Database } from '@/types/database'
+import { useEffect, useState, useCallback } from 'react'
+import type { NotificationType, NotificationChannel } from '@/lib/mongodb/models'
 
-type Notification = Database['public']['Tables']['notifications']['Row']
+export interface AppNotification {
+  id: string
+  farmer_id: string
+  booking_id?: string | null
+  type: NotificationType
+  channel: NotificationChannel
+  message: string
+  sent_at: string
+  delivery_status: string
+  read_at?: string | null
+}
 
 export function useNotifications(farmerId?: string) {
-  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [notifications, setNotifications] = useState<AppNotification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
 
-  useEffect(() => {
+  const fetchNotifications = useCallback(async () => {
     if (!farmerId) return
-    const supabase = createClient()
-
-    const fetchNotifications = async () => {
-      const { data } = await supabase
-        .from('notifications')
-        .select('*')
-        .eq('farmer_id', farmerId)
-        .order('sent_at', { ascending: false })
-        .limit(50)
-      if (data) {
-        setNotifications(data)
-        setUnreadCount(data.filter((n) => !n.read_at).length)
+    try {
+      const res = await fetch('/api/notifications')
+      if (res.ok) {
+        const data = await res.json()
+        setNotifications(data.notifications || [])
+        setUnreadCount(data.unreadCount || 0)
       }
-    }
-
-    fetchNotifications()
-
-    const channel = supabase
-      .channel('notifications:' + farmerId)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'notifications',
-          filter: `farmer_id=eq.${farmerId}`,
-        },
-        (payload) => {
-          setNotifications((prev) => [payload.new as Notification, ...prev])
-          setUnreadCount((prev) => prev + 1)
-        }
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
+    } catch {
+      // Ignore network errors on background poll
     }
   }, [farmerId])
 
+  useEffect(() => {
+    fetchNotifications()
+    // Poll every 8 seconds for live notifications without needing replica sets
+    const interval = setInterval(fetchNotifications, 8000)
+    return () => clearInterval(interval)
+  }, [fetchNotifications])
+
   const markAllRead = async () => {
-    if (!farmerId) return
-    const supabase = createClient()
-    await supabase
-      .from('notifications')
-      .update({ read_at: new Date().toISOString() })
-      .eq('farmer_id', farmerId)
-      .is('read_at', null)
-    setNotifications((prev) => prev.map((n) => ({ ...n, read_at: n.read_at ?? new Date().toISOString() })))
-    setUnreadCount(0)
+    try {
+      await fetch('/api/notifications', { method: 'PATCH' })
+      setNotifications((prev) =>
+        prev.map((n) => ({ ...n, read_at: n.read_at ?? new Date().toISOString() }))
+      )
+      setUnreadCount(0)
+    } catch {
+      // Error handling
+    }
   }
 
-  return { notifications, unreadCount, markAllRead }
+  return { notifications, unreadCount, markAllRead, refresh: fetchNotifications }
 }

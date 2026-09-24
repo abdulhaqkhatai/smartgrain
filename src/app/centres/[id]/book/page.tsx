@@ -2,7 +2,6 @@
 
 import { useEffect, useState, use } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
 import { useProfile } from '@/hooks/useProfile'
 import { useNotifications } from '@/hooks/useNotifications'
 import { Navbar } from '@/components/layout/navbar'
@@ -10,39 +9,41 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
-import { formatDate, formatTime, GRAIN_TYPES } from '@/lib/utils'
+import { formatDate, formatTime } from '@/lib/utils'
 import { Calendar, Clock, Users, Wheat, AlertCircle, CheckCircle } from 'lucide-react'
-import type { Database } from '@/types/database'
 
-type Centre = Database['public']['Tables']['centres']['Row']
-type Slot = Database['public']['Tables']['slots']['Row']
-type Booking = Database['public']['Tables']['bookings']['Row']
-
-interface BookPageProps {
-  params: Promise<{ id: string }>
+interface SlotItem {
+  id: string
+  centre_id: string
+  slot_date: string
+  start_time: string
+  end_time: string
+  capacity: number
+  booked_count: number
+  is_active: boolean
 }
 
-export default function BookSlotPage({ params }: BookPageProps) {
+export default function BookSlotPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: centreId } = use(params)
   const { profile } = useProfile()
   const { unreadCount } = useNotifications(profile?.id)
   const router = useRouter()
 
-  const [centre, setCentre] = useState<Centre | null>(null)
+  const [centre, setCentre] = useState<any | null>(null)
   const [selectedDate, setSelectedDate] = useState('')
-  const [slots, setSlots] = useState<Slot[]>([])
-  const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
+  const [slots, setSlots] = useState<SlotItem[]>([])
+  const [selectedSlot, setSelectedSlot] = useState<SlotItem | null>(null)
   const [grainType, setGrainType] = useState('')
   const [quantity, setQuantity] = useState('')
   const [loading, setLoading] = useState(true)
   const [slotsLoading, setSlotsLoading] = useState(false)
   const [booking, setBooking] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState<Booking | null>(null)
+  const [success, setSuccess] = useState<any | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [estimatedPosition, setEstimatedPosition] = useState<number | null>(null)
 
-  // Generate next 14 days for date picker
+  // Generate next 14 days
   const dateOptions = Array.from({ length: 14 }, (_, i) => {
     const d = new Date()
     d.setDate(d.getDate() + i)
@@ -50,40 +51,42 @@ export default function BookSlotPage({ params }: BookPageProps) {
   })
 
   useEffect(() => {
-    const supabase = createClient()
-    supabase
-      .from('centres')
-      .select('*')
-      .eq('id', centreId)
-      .single()
-      .then(({ data }) => {
-        setCentre(data)
-        setLoading(false)
-        if (data?.grain_types?.length) setGrainType(data.grain_types[0])
+    fetch(`/api/centres/${centreId}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setCentre(data.centre)
+        if (data.centre?.grain_types?.length) {
+          setGrainType(data.centre.grain_types[0])
+        }
       })
+      .catch(() => {})
+      .finally(() => setLoading(false))
   }, [centreId])
+
+  const fetchSlotsForDate = async (dateStr: string) => {
+    setSlotsLoading(true)
+    try {
+      const res = await fetch(`/api/centres/${centreId}/slots?date=${dateStr}`)
+      const data = await res.json()
+      setSlots(data.slots || [])
+      setSelectedSlot(null)
+    } catch {
+      // Error
+    } finally {
+      setSlotsLoading(false)
+    }
+  }
 
   useEffect(() => {
     if (!selectedDate) return
-    setSlotsLoading(true)
-    const supabase = createClient()
-    supabase
-      .from('slots')
-      .select('*')
-      .eq('centre_id', centreId)
-      .eq('slot_date', selectedDate)
-      .eq('is_active', true)
-      .order('start_time')
-      .then(({ data }) => {
-        setSlots(data || [])
-        setSelectedSlot(null)
-        setSlotsLoading(false)
-      })
+    fetchSlotsForDate(selectedDate)
   }, [selectedDate, centreId])
 
   useEffect(() => {
-    if (!selectedSlot) { setEstimatedPosition(null); return }
-    // Estimate position = current booked_count + 1
+    if (!selectedSlot) {
+      setEstimatedPosition(null)
+      return
+    }
     setEstimatedPosition(selectedSlot.booked_count + 1)
   }, [selectedSlot])
 
@@ -92,53 +95,42 @@ export default function BookSlotPage({ params }: BookPageProps) {
     setBooking(true)
     setError('')
 
-    const supabase = createClient()
-    const { data, error: rpcError } = await supabase.rpc('book_slot', {
-      p_farmer_id: profile.id,
-      p_slot_id: selectedSlot.id,
-      p_grain_type: grainType,
-      p_estimated_quantity_kg: parseFloat(quantity),
-    })
+    try {
+      const res = await fetch('/api/bookings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slotId: selectedSlot.id,
+          grainType,
+          estimatedQuantityKg: parseFloat(quantity),
+        }),
+      })
 
-    if (rpcError) {
-      if (rpcError.message.includes('SLOT_FULL')) {
-        setError('This slot is now full. Please select another slot.')
-        // Refresh slots
-        const { data: refreshed } = await supabase
-          .from('slots')
-          .select('*')
-          .eq('centre_id', centreId)
-          .eq('slot_date', selectedDate)
-          .eq('is_active', true)
-          .order('start_time')
-        setSlots(refreshed || [])
-        setSelectedSlot(null)
-      } else if (rpcError.message.includes('SLOT_INACTIVE')) {
-        setError('This slot has been closed. Please choose another.')
-        setSelectedSlot(null)
-      } else {
-        setError(rpcError.message)
+      const data = await res.json()
+
+      if (!res.ok) {
+        if (data.error === 'SLOT_FULL') {
+          setError('This slot is now full. Please select another slot.')
+          await fetchSlotsForDate(selectedDate)
+        } else if (data.error === 'SLOT_INACTIVE') {
+          setError('This slot has been closed.')
+          await fetchSlotsForDate(selectedDate)
+        } else {
+          setError(data.error || 'Failed to book slot')
+        }
+        setBooking(false)
+        setConfirmOpen(false)
+        return
       }
+
+      setSuccess(data.booking)
       setBooking(false)
       setConfirmOpen(false)
-      return
+    } catch (err: any) {
+      setError(err.message || 'Network error')
+      setBooking(false)
+      setConfirmOpen(false)
     }
-
-    // Send booking_confirmed notification
-    await supabase.functions.invoke('send-notification', {
-      body: {
-        farmer_id: profile.id,
-        phone: profile.phone,
-        message: `Booking confirmed! Reference: ${(data as Booking).booking_reference}. Slot: ${formatDate(selectedDate)} ${formatTime(selectedSlot.start_time)}. Centre: ${centre?.name}.`,
-        type: 'booking_confirmed',
-        booking_id: (data as Booking).id,
-        channel: 'in_app',
-      },
-    })
-
-    setSuccess(data as Booking)
-    setBooking(false)
-    setConfirmOpen(false)
   }
 
   if (loading) {
@@ -158,7 +150,7 @@ export default function BookSlotPage({ params }: BookPageProps) {
             <CheckCircle className="h-10 w-10 text-green-600" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Booking Confirmed!</h1>
-          <p className="text-gray-500 mb-6">Your slot has been successfully booked.</p>
+          <p className="text-gray-500 mb-6">Your slot has been successfully reserved in MongoDB.</p>
           <Card className="text-left mb-6">
             <CardContent className="py-4 space-y-3">
               <div className="flex justify-between text-sm">
@@ -202,7 +194,7 @@ export default function BookSlotPage({ params }: BookPageProps) {
     )
   }
 
-  const grainOptions = (centre?.grain_types || []).map((g) => ({
+  const grainOptions = (centre?.grain_types || []).map((g: string) => ({
     value: g,
     label: g.charAt(0).toUpperCase() + g.slice(1),
   }))

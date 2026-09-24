@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Wheat } from 'lucide-react'
@@ -19,31 +18,26 @@ export default function LoginPage() {
     e.preventDefault()
     setError('')
     setLoading(true)
-    const supabase = createClient()
 
-    const { data, error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
+      const data = await res.json()
 
-    if (signInError) {
-      setError(signInError.message)
-      setLoading(false)
-      return
-    }
+      if (!res.ok) {
+        setError(data.error || 'Login failed')
+        setLoading(false)
+        return
+      }
 
-    if (data.user) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', data.user.id)
-        .single()
-
-      const role = (profile as { role: string } | null)?.role
-      router.push(
-        role === 'admin' ? '/admin/analytics' : role === 'staff' ? '/staff/dashboard' : '/dashboard'
-      )
+      router.push(data.redirectTo || '/dashboard')
       router.refresh()
+    } catch (err: any) {
+      setError(err.message || 'Network error')
+      setLoading(false)
     }
   }
 
@@ -90,6 +84,15 @@ export default function LoginPage() {
               Sign In
             </Button>
           </form>
+
+          {/* Quick Demo Credentials */}
+          <div className="mt-6 pt-4 border-t border-gray-100 text-xs text-gray-500 space-y-1 bg-gray-50 p-3 rounded-lg">
+            <div className="font-semibold text-gray-700">Demo Accounts (after seeding):</div>
+            <div>• Farmer: <code>farmer@grainprocure.in</code> / <code>farmer123</code></div>
+            <div>• Staff: <code>staff@grainprocure.in</code> / <code>staff123</code></div>
+            <div>• Admin: <code>admin@grainprocure.in</code> / <code>admin123</code></div>
+          </div>
+
           <p className="mt-4 text-center text-sm text-gray-500">
             Don&apos;t have an account?{' '}
             <Link href="/register" className="text-green-600 font-medium hover:underline">

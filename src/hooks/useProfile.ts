@@ -1,32 +1,37 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
-import type { Database, UserRole } from '@/types/database'
+import type { UserRole } from '@/lib/mongodb/models'
 
-type Profile = Database['public']['Tables']['profiles']['Row']
+export interface UserProfile {
+  id: string
+  full_name: string
+  email: string
+  phone: string
+  role: UserRole
+  assigned_centre_id?: string | null
+  village?: string | null
+}
 
 export function useProfile() {
-  const [profile, setProfile] = useState<Profile | null>(null)
+  const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const supabase = createClient()
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) {
+    fetch('/api/auth/me')
+      .then((res) => {
+        if (!res.ok) throw new Error('Not authenticated')
+        return res.json()
+      })
+      .then((data) => {
+        setProfile(data.user)
+      })
+      .catch(() => {
+        setProfile(null)
+      })
+      .finally(() => {
         setLoading(false)
-        return
-      }
-      supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single()
-        .then(({ data }) => {
-          setProfile(data)
-          setLoading(false)
-        })
-    })
+      })
   }, [])
 
   return { profile, loading }
