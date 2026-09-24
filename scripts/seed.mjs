@@ -5,7 +5,7 @@ import bcrypt from 'bcryptjs'
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/grain_procurement'
 
 async function seed() {
-  console.log('Connecting to MongoDB:', MONGODB_URI)
+  console.log('Connecting to MongoDB...')
   await mongoose.connect(MONGODB_URI)
 
   const db = mongoose.connection.db
