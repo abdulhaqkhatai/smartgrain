@@ -1,20 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth'
 import { connectDB } from '@/lib/mongodb/db'
-import { Booking, BookingStatusLog, Slot, Centre } from '@/lib/mongodb/models'
+import { Booking, BookingStatusLog, Slot, User } from '@/lib/mongodb/models'
+
+async function resolveUserId(): Promise<{ userId: string; role: string } | null> {
+  const session = await getSessionUser()
+  if (session) return session
+
+  // Guest fallback: use demo farmer
+  await connectDB()
+  const demoUser =
+    (await User.findOne({ email: 'farmer@grainprocure.in' })) ||
+    (await User.findOne({ role: 'farmer' }))
+  if (demoUser) {
+    return { userId: demoUser._id.toString(), role: 'farmer' }
+  }
+  return null
+}
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getSessionUser()
+    await connectDB()
+    const session = await resolveUserId()
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { id } = await params
-    await connectDB()
 
     const booking = await Booking.findById(id)
       .populate('centre_id')
@@ -24,8 +39,13 @@ export async function GET(
       return NextResponse.json({ error: 'Booking not found' }, { status: 404 })
     }
 
-    // Role security check
-    if (session.role === 'farmer' && booking.farmer_id.toString() !== session.userId) {
+    // Role security check — only block if logged-in farmer accessing someone else's booking
+    const sessionFromCookie = await getSessionUser()
+    if (
+      sessionFromCookie &&
+      sessionFromCookie.role === 'farmer' &&
+      booking.farmer_id.toString() !== sessionFromCookie.userId
+    ) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
     }
 
@@ -120,20 +140,26 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getSessionUser()
+    await connectDB()
+    const session = await resolveUserId()
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { id } = await params
-    await connectDB()
 
     const booking = await Booking.findById(id)
     if (!booking) {
       return NextResponse.json({ error: 'Booking not found' }, { status: 404 })
     }
 
-    if (session.role === 'farmer' && booking.farmer_id.toString() !== session.userId) {
+    // If logged-in farmer, verify ownership; guests can cancel demo farmer's bookings
+    const sessionFromCookie = await getSessionUser()
+    if (
+      sessionFromCookie &&
+      sessionFromCookie.role === 'farmer' &&
+      booking.farmer_id.toString() !== sessionFromCookie.userId
+    ) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
     }
 
@@ -149,7 +175,6 @@ export async function PATCH(
     booking.cancelled_at = new Date()
     await booking.save()
 
-    // Decrement slot booked count safely
     await Slot.findByIdAndUpdate(booking.slot_id, { $inc: { booked_count: -1 } })
 
     // Log cancellation

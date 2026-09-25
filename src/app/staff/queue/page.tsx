@@ -67,7 +67,7 @@ export default function StaffQueuePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           bookingId: item.booking_id,
-          newStage,
+          newStage: nextStage,
           actualQuantityKg: actualQty[item.booking_id] || undefined,
           paymentAmount: paymentAmt[item.booking_id] || undefined,
         }),
