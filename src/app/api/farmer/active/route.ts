@@ -1,22 +1,34 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth'
 import { connectDB } from '@/lib/mongodb/db'
-import { Booking, Slot, Centre } from '@/lib/mongodb/models'
+import { Booking, Slot, Centre, User } from '@/lib/mongodb/models'
 
 export async function GET() {
   try {
+    await connectDB()
     const session = await getSessionUser()
-    if (!session || session.role !== 'farmer') {
-      return NextResponse.json({ activeBooking: null, queueInfo: null, recentBookings: [] })
+
+    let farmerId = session?.userId
+
+    if (!farmerId) {
+      // Use demo farmer when not logged in
+      const demoUser =
+        (await User.findOne({ email: 'farmer@grainprocure.in' })) ||
+        (await User.findOne({ role: 'farmer' }))
+      if (demoUser) {
+        farmerId = demoUser._id.toString()
+      }
     }
 
-    await connectDB()
+    if (!farmerId) {
+      return NextResponse.json({ activeBooking: null, queueInfo: null, recentBookings: [] })
+    }
 
     const activeStages = ['booked', 'checked_in', 'quality_check', 'weighed']
 
     // 1. Most recent active booking
     const activeBooking = await Booking.findOne({
-      farmer_id: session.userId,
+      farmer_id: farmerId,
       procurement_stage: { $in: activeStages },
     })
       .sort({ booked_at: -1 })
@@ -49,13 +61,13 @@ export async function GET() {
       })
 
       queueInfo = {
-        queue_position: earlierCount,
-        total_in_queue: totalInQueue,
+        queue_position: earlierCount || 1,
+        total_in_queue: totalInQueue || 1,
       }
     }
 
     // 2. Recent bookings (up to 5)
-    const recent = await Booking.find({ farmer_id: session.userId })
+    const recent = await Booking.find({ farmer_id: farmerId })
       .sort({ booked_at: -1 })
       .limit(5)
       .populate('centre_id')

@@ -1,23 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth'
 import { connectDB } from '@/lib/mongodb/db'
-import { Booking, Centre, Slot, Notification } from '@/lib/mongodb/models'
+import { Booking, Centre, Slot, Notification, User } from '@/lib/mongodb/models'
 import { bookSlotConcurrently } from '@/lib/mongodb/services'
 
 export async function GET() {
   try {
-    const session = await getSessionUser()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
     await connectDB()
+    const session = await getSessionUser()
 
     const filter: any = {}
-    if (session.role === 'farmer') {
-      filter.farmer_id = session.userId
-    } else if (session.role === 'staff' && session.assignedCentreId) {
-      filter.centre_id = session.assignedCentreId
+    if (session) {
+      if (session.role === 'farmer') {
+        filter.farmer_id = session.userId
+      } else if (session.role === 'staff' && session.assignedCentreId) {
+        filter.centre_id = session.assignedCentreId
+      }
+    } else {
+      // If not logged in, show demo farmer bookings
+      const demoUser =
+        (await User.findOne({ email: 'farmer@grainprocure.in' })) ||
+        (await User.findOne({ role: 'farmer' }))
+      if (demoUser) {
+        filter.farmer_id = demoUser._id
+      }
     }
 
     const bookings = await Booking.find(filter)
@@ -72,9 +78,25 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    await connectDB()
     const session = await getSessionUser()
-    if (!session) {
-      return NextResponse.json({ error: 'Please log in to book a slot' }, { status: 401 })
+
+    let farmerId = session?.userId
+    if (!farmerId) {
+      // Auto-assign to demo farmer when login is not compulsory
+      let demoUser =
+        (await User.findOne({ email: 'farmer@grainprocure.in' })) ||
+        (await User.findOne({ role: 'farmer' }))
+      if (!demoUser) {
+        demoUser = await User.create({
+          full_name: 'Guest Farmer',
+          email: 'farmer@grainprocure.in',
+          phone: '9876543212',
+          password_hash: 'guest_pass_hash',
+          role: 'farmer',
+        })
+      }
+      farmerId = demoUser._id.toString()
     }
 
     const { slotId, grainType, estimatedQuantityKg } = await req.json()
@@ -83,7 +105,7 @@ export async function POST(req: NextRequest) {
     }
 
     const booking = await bookSlotConcurrently({
-      farmerId: session.userId,
+      farmerId,
       slotId,
       grainType,
       estimatedQuantityKg: parseFloat(estimatedQuantityKg),
@@ -94,7 +116,7 @@ export async function POST(req: NextRequest) {
     const centreName = (slot?.centre_id as any)?.name || 'Centre'
 
     await Notification.create({
-      farmer_id: session.userId,
+      farmer_id: farmerId,
       booking_id: booking._id,
       type: 'booking_confirmed',
       channel: 'in_app',
@@ -119,10 +141,16 @@ export async function POST(req: NextRequest) {
     })
   } catch (err: any) {
     if (err.message === 'SLOT_FULL') {
-      return NextResponse.json({ error: 'SLOT_FULL', message: 'This slot is full. Please pick another slot.' }, { status: 409 })
+      return NextResponse.json(
+        { error: 'SLOT_FULL', message: 'This slot is full. Please pick another slot.' },
+        { status: 409 }
+      )
     }
     if (err.message === 'SLOT_INACTIVE') {
-      return NextResponse.json({ error: 'SLOT_INACTIVE', message: 'This slot has been closed.' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'SLOT_INACTIVE', message: 'This slot has been closed.' },
+        { status: 400 }
+      )
     }
     return NextResponse.json({ error: err.message }, { status: 500 })
   }

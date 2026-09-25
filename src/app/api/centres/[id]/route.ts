@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { connectDB } from '@/lib/mongodb/db'
 import { Centre } from '@/lib/mongodb/models'
-import { getSessionUser } from '@/lib/auth'
 
 export async function GET(
   _req: NextRequest,
@@ -39,11 +38,6 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getSessionUser()
-    if (!session || session.role !== 'admin') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
-    }
-
     const { id } = await params
     await connectDB()
     const body = await req.json()

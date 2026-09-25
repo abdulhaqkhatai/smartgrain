@@ -1,22 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth'
 import { connectDB } from '@/lib/mongodb/db'
-import { Slot, SlotTemplate } from '@/lib/mongodb/models'
+import { Slot, SlotTemplate, User, Centre } from '@/lib/mongodb/models'
 import { generateSlotsFromTemplates } from '@/lib/mongodb/services'
+
+async function resolveCentreId(session: any) {
+  if (session?.assignedCentreId) return session.assignedCentreId
+  const staffUser = await User.findOne({ role: 'staff' })
+  if (staffUser?.assigned_centre_id) return staffUser.assigned_centre_id.toString()
+  const firstCentre = await Centre.findOne({ is_active: true })
+  return firstCentre ? firstCentre._id.toString() : null
+}
 
 export async function GET() {
   try {
+    await connectDB()
     const session = await getSessionUser()
-    if (!session || (session.role !== 'staff' && session.role !== 'admin')) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
-    }
+    const centreId = await resolveCentreId(session)
 
-    const centreId = session.assignedCentreId
     if (!centreId) {
       return NextResponse.json({ slots: [], templates: [] })
     }
 
-    await connectDB()
     const today = new Date().toISOString().split('T')[0]
 
     const [slots, templates] = await Promise.all([
@@ -52,20 +57,16 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    await connectDB()
     const session = await getSessionUser()
-    if (!session || (session.role !== 'staff' && session.role !== 'admin')) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
-    }
+    const centreId = await resolveCentreId(session)
 
-    const centreId = session.assignedCentreId
     if (!centreId) {
-      return NextResponse.json({ error: 'No centre assigned to your account' }, { status: 400 })
+      return NextResponse.json({ error: 'No centre available' }, { status: 400 })
     }
 
     const body = await req.json()
     const { action } = body
-
-    await connectDB()
 
     if (action === 'generate') {
       await generateSlotsFromTemplates(14)
@@ -107,11 +108,6 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const session = await getSessionUser()
-    if (!session || (session.role !== 'staff' && session.role !== 'admin')) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
-    }
-
     const { slotId, is_active } = await req.json()
     await connectDB()
     const slot = await Slot.findByIdAndUpdate(slotId, { is_active }, { new: true })
@@ -123,11 +119,6 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const session = await getSessionUser()
-    if (!session || (session.role !== 'staff' && session.role !== 'admin')) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
-    }
-
     const { searchParams } = new URL(req.url)
     const templateId = searchParams.get('id')
     if (!templateId) return NextResponse.json({ error: 'Missing ID' }, { status: 400 })

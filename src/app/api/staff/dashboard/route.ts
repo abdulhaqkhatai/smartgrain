@@ -1,16 +1,26 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth'
 import { connectDB } from '@/lib/mongodb/db'
-import { Slot, Booking } from '@/lib/mongodb/models'
+import { Slot, Booking, User, Centre } from '@/lib/mongodb/models'
 
 export async function GET() {
   try {
+    await connectDB()
     const session = await getSessionUser()
-    if (!session || (session.role !== 'staff' && session.role !== 'admin')) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
+
+    let centreId = session?.assignedCentreId
+
+    if (!centreId) {
+      // Find staff user or default to first centre (Jodhpur)
+      const staffUser = await User.findOne({ role: 'staff' })
+      if (staffUser?.assigned_centre_id) {
+        centreId = staffUser.assigned_centre_id.toString()
+      } else {
+        const firstCentre = await Centre.findOne({ is_active: true })
+        if (firstCentre) centreId = firstCentre._id.toString()
+      }
     }
 
-    const centreId = session.assignedCentreId
     if (!centreId) {
       return NextResponse.json({
         stats: { total: 0, active: 0, completed: 0, cancelled: 0 },
@@ -19,7 +29,6 @@ export async function GET() {
       })
     }
 
-    await connectDB()
     const today = new Date().toISOString().split('T')[0]
 
     // 1. Slots for today

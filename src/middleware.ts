@@ -27,27 +27,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL(redirectTo, request.url))
   }
 
-  // Protected paths
-  const protectedPrefixes = ['/dashboard', '/centres', '/bookings', '/notifications', '/staff', '/admin']
-  const isProtected = protectedPrefixes.some((p) => pathname.startsWith(p))
-
-  if (!userPayload && isProtected) {
-    return NextResponse.redirect(new URL('/login', request.url))
-  }
-
-  // Role authorization
-  if (userPayload && isProtected) {
-    const role = userPayload.role
-
-    if (pathname.startsWith('/staff') && role !== 'staff' && role !== 'admin') {
-      return NextResponse.redirect(new URL('/dashboard', request.url))
-    }
-
-    if (pathname.startsWith('/admin') && role !== 'admin') {
-      return NextResponse.redirect(new URL('/dashboard', request.url))
-    }
-  }
-
+  // Login is NOT compulsory for now — allow direct browsing to all pages (Home, Dashboard, Centres, Bookings, Staff, Admin)
   return NextResponse.next()
 }
 

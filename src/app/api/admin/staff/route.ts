@@ -1,15 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSessionUser, hashPassword } from '@/lib/auth'
+import { hashPassword } from '@/lib/auth'
 import { connectDB } from '@/lib/mongodb/db'
 import { User, Centre } from '@/lib/mongodb/models'
 
 export async function GET() {
   try {
-    const session = await getSessionUser()
-    if (!session || session.role !== 'admin') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
-    }
-
     await connectDB()
     const [staffUsers, centres] = await Promise.all([
       User.find({ role: { $in: ['staff', 'admin'] } }).select('-password_hash').sort({ full_name: 1 }),
@@ -37,11 +32,6 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getSessionUser()
-    if (!session || session.role !== 'admin') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
-    }
-
     const { full_name, email, phone, password, assigned_centre_id } = await req.json()
     if (!full_name || !email || !phone || !password) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -84,11 +74,6 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const session = await getSessionUser()
-    if (!session || session.role !== 'admin') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
-    }
-
     const { userId, assigned_centre_id } = await req.json()
     await connectDB()
     const user = await User.findByIdAndUpdate(

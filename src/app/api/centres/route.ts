@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { connectDB } from '@/lib/mongodb/db'
 import { Centre } from '@/lib/mongodb/models'
-import { getSessionUser } from '@/lib/auth'
 
 export async function GET() {
   try {
@@ -27,11 +26,6 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getSessionUser()
-    if (!session || session.role !== 'admin') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
-    }
-
     await connectDB()
     const body = await req.json()
     const centre = await Centre.create({

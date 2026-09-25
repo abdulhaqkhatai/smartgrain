@@ -1,16 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSessionUser } from '@/lib/auth'
 import { connectDB } from '@/lib/mongodb/db'
 import { Booking, Centre, User } from '@/lib/mongodb/models'
 import { STAGE_LABELS } from '@/lib/utils'
 
 export async function GET(req: NextRequest) {
   try {
-    const session = await getSessionUser()
-    if (!session || session.role !== 'admin') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
-    }
-
     const { searchParams } = new URL(req.url)
     const days = parseInt(searchParams.get('days') || '30')
 
@@ -26,14 +20,16 @@ export async function GET(req: NextRequest) {
     ])
 
     // Centre load
-    const centreLoad = centres.map((c) => {
-      const cb = bookings.filter((b) => (b.centre_id as any)?._id?.toString() === c._id.toString())
-      return {
-        name: c.code,
-        bookings: cb.length,
-        completed: cb.filter((b) => b.procurement_stage === 'procured').length,
-      }
-    }).sort((a, b) => b.bookings - a.bookings)
+    const centreLoad = centres
+      .map((c) => {
+        const cb = bookings.filter((b) => (b.centre_id as any)?._id?.toString() === c._id.toString())
+        return {
+          name: c.code,
+          bookings: cb.length,
+          completed: cb.filter((b) => b.procurement_stage === 'procured').length,
+        }
+      })
+      .sort((a, b) => b.bookings - a.bookings)
 
     // Stage distribution
     const stageCounts: Record<string, number> = {}
